@@ -166,6 +166,7 @@ if page == "Importar pedidos":
 
 elif page == "Etiquetas":
     st.subheader("Gerar etiquetas")
+    st.caption("Zebra · 140 × 50 mm · imprima em tamanho real (100%). Até 3 códigos por etiqueta; demais códigos seguem em etiquetas complementares do mesmo volume.")
     orders = sorted(set(r["pedido"] for r in rows))
     if orders:
         order = st.selectbox("Número do pedido", orders)
