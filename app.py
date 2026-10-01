@@ -14,6 +14,8 @@ from supabase import create_client
 from importacao import parse_import
 from etiquetas import label_pdf
 from operacoes import dispatch, ExpedicaoNaoConfirmada
+from filtros import filter_waiting
+from camera_traseira import rear_camera
 
 st.set_page_config(page_title="Controle de expedição", page_icon="📦", layout="wide")
 TZ = ZoneInfo("America/Manaus")
@@ -109,6 +111,21 @@ def export(rows):
     return out.getvalue(), data
 
 
+def days_filter(frame, prefix):
+    mode = st.selectbox("Filtrar por dias aguardando expedição", ["Todos", "Exatamente", "Pelo menos", "Entre"], key=f"{prefix}_mode")
+    if mode == "Todos": return frame
+    if mode == "Entre":
+        left, right = st.columns(2)
+        low = left.number_input("Dias mínimos", min_value=0, value=7, step=1, key=f"{prefix}_min")
+        high = right.number_input("Dias máximos", min_value=0, value=30, step=1, key=f"{prefix}_max")
+        if high < low:
+            st.warning("O máximo deve ser maior ou igual ao mínimo.")
+            return frame.iloc[0:0]
+        return filter_waiting(frame, mode, low, high)
+    low = st.number_input("Quantidade de dias", min_value=0, value=7, step=1, key=f"{prefix}_value")
+    return filter_waiting(frame, mode, low)
+
+
 config()
 login()
 st.title("📦 Controle de expedição")
@@ -187,7 +204,7 @@ elif page == "Executar expedição":
         st.success(st.session_state.pop("dispatch_message"))
     st.write("Use a câmera para fotografar o QR da etiqueta ou digite o conteúdo impresso abaixo dele. A foto da embalagem é obrigatória.")
     mode = st.radio("Como ler a etiqueta?", ["Câmera", "Enviar foto do QR", "Leitor / digitar"], horizontal=True)
-    scan = st.camera_input("Ler QR da etiqueta", key="scan") if mode == "Câmera" else (st.file_uploader("Foto do QR", type=["jpg", "jpeg", "png"], key="qr_file") if mode == "Enviar foto do QR" else None)
+    scan = rear_camera("Ler QR da etiqueta", key="scan_rear") if mode == "Câmera" else (st.file_uploader("Foto do QR", type=["jpg", "jpeg", "png"], key="qr_file") if mode == "Enviar foto do QR" else None)
     decoded = decode(scan) if scan else ""
     if scan and not decoded:
         st.warning("QR não identificado. Aproxime a câmera, ilumine a etiqueta e tente novamente.")
@@ -203,7 +220,7 @@ elif page == "Executar expedição":
         if found["status"] == "Pendente":
             operator = st.text_input("Nome do responsável")
             photo_mode = st.radio("Registrar foto do volume", ["Tirar foto", "Enviar foto"], horizontal=True)
-            photo = st.camera_input("Foto obrigatória do volume antes da expedição", key=f"photo_{key}") if photo_mode == "Tirar foto" else st.file_uploader("Foto do volume (obrigatória)", type=["jpg", "jpeg", "png"], key=f"photo_file_{key}")
+            photo = rear_camera("Foto obrigatória do volume antes da expedição", key=f"photo_rear_{key}") if photo_mode == "Tirar foto" else st.file_uploader("Foto do volume (obrigatória)", type=["jpg", "jpeg", "png"], key=f"photo_file_{key}")
             if st.button("Confirmar expedição", type="primary"):
                 if not operator.strip() or not photo:
                     st.error("Informe o responsável e tire a foto do volume.")
@@ -237,11 +254,15 @@ else:
         if query.strip():
             mask = pending[['pedido','nome_cliente','ordem_servico']].fillna('').astype(str).apply(lambda col: col.str.contains(query.strip(),case=False,regex=False)).any(axis=1)
             pending = pending[mask]
+        pending = days_filter(pending, "pending_days")
+        st.caption(f"{pending['pedido'].nunique()} pedido(s) · {len(pending)} volume(s) nos filtros selecionados.")
         st.download_button("Exportar pendentes exibidos", export(pending.to_dict('records'))[0], "pendentes_expedicao.xlsx")
         st.dataframe(pending[["pedido", "volume", "total_volumes", "tipo", "codigos", "ordem_servico", "nome_cliente", "peso_bruto", "data_pedido", "dias_aguardando"]].sort_values("dias_aguardando", ascending=False), hide_index=True)
     else:
         status = st.selectbox("Filtrar", ["Todos", "Pendente", "Expedido"])
         view = data if status == "Todos" else data[data["status"] == status]
+        if status == "Pendente":
+            view = days_filter(view, "records_days")
         query = st.text_input("Buscar pedido, cliente ou OS/OC", key="records_search")
         if query.strip():
             mask = view[['pedido','nome_cliente','ordem_servico']].fillna('').astype(str).apply(lambda col: col.str.contains(query.strip(),case=False,regex=False)).any(axis=1)
